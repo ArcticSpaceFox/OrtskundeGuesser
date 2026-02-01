@@ -39,12 +39,14 @@ const center = ref({ lat: 52.52, lon: 13.405 })
 const challenge = ref(null)
 const message = ref('')
 const distanceKm = ref(null)
+const showAnswer = ref(false)
 
 onMounted(() => {
   map = L.map(mapEl.value).setView([center.value.lat, center.value.lon], 12)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/light_nolabels/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd',
     maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   }).addTo(map)
   map.on('click', (e) => handleGuess(e.latlng))
   // ensure size is correct after layout
@@ -110,6 +112,7 @@ async function newChallenge() {
 
     const pick = addresses[Math.floor(Math.random() * addresses.length)]
     challenge.value = pick
+    showAnswer.value = false
     message.value = 'Klicke auf die Karte, um zu raten.'
 
     // clear previous markers
@@ -135,13 +138,19 @@ function handleGuess(latlng) {
   if (guessMarker) map.removeLayer(guessMarker)
   guessMarker = L.marker(latlng).addTo(map).bindPopup('Dein Tipp').openPopup()
 
-  // place actual marker
+  // place actual marker but don't reveal street name yet
   if (actualMarker) map.removeLayer(actualMarker)
-  actualMarker = L.marker([challenge.value.lat, challenge.value.lon], { opacity: 0.8 }).addTo(map).bindPopup(`Actual: ${challenge.value.street} ${challenge.value.housenumber}`).openPopup()
+  actualMarker = L.marker([challenge.value.lat, challenge.value.lon], { opacity: 0.8 }).addTo(map).bindPopup('Tatsächlicher Ort').openPopup()
 
   // compute distance
   distanceKm.value = haversine(latlng.lat, latlng.lng, challenge.value.lat, challenge.value.lon)
   message.value = `Du warst ${distanceKm.value.toFixed(2)} km entfernt.`
+  // reveal street name and update popup
+  showAnswer.value = true
+  if (actualMarker) {
+    actualMarker.setPopupContent(`Tatsächlich: ${challenge.value.street} ${challenge.value.housenumber}`)
+    actualMarker.openPopup()
+  }
 }
 
 function haversine(lat1, lon1, lat2, lon2) {
