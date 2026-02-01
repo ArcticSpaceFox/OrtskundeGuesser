@@ -28,14 +28,97 @@ import markerShadow from 'leaflet/dist/images/marker-shadow.png'
 
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, shadowUrl: markerShadow })
 
-const centerCity = ref('Berlin')
-const radiusKm = ref(30)
+// Simple localStorage cache helpers (value stored as { ts, ttl, data })
+function cacheGet(key) {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed.ts || !parsed.ttl) return null
+    if (Date.now() - parsed.ts > parsed.ttl) {
+      localStorage.removeItem(key)
+      return null
+    }
+    return parsed.data
+  } catch (e) {
+    return null
+  }
+}
+
+function cacheSet(key, data, ttl) {
+  try {
+    const payload = { ts: Date.now(), ttl, data }
+    localStorage.setItem(key, JSON.stringify(payload))
+  } catch (e) {
+    // ignore quota errors
+  }
+}
+
+const GEOCODE_TTL = 24 * 60 * 60 * 1000 // 24h
+const OVERPASS_TTL = 6 * 60 * 60 * 1000 // 6h
+
+function overpassCacheKey(lat, lon, radiusMeters) {
+  // round lat/lon to 4 decimals (~11m) to increase cache hits
+  const rlat = Math.round(lat * 10000) / 10000
+  const rlon = Math.round(lon * 10000) / 10000
+  return `overpass:${rlat}:${rlon}:${Math.round(radiusMeters)}`
+}
+
+function buildAddressQueue(addresses) {
+  // group by street
+  const byStreet = {}
+  addresses.forEach(a => {
+    const s = (a.street || '').trim()
+    if (!byStreet[s]) byStreet[s] = []
+    // use unique key to avoid duplicate housenumbers
+    const key = `${s}||${a.housenumber}`
+    byStreet[s].push(a)
+  })
+
+  const streets = Object.keys(byStreet)
+  const shuffle = (arr) => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const tmp = arr[i]
+      arr[i] = arr[j]
+      arr[j] = tmp
+    }
+    return arr
+  }
+
+  // prepare per-street shuffled lists
+  const lists = streets.map(s => shuffle([...byStreet[s]]))
+
+  // round-robin merge so consecutive picks come from different streets
+  const queue = []
+  let added = true
+  while (added) {
+    added = false
+    for (let i = 0; i < lists.length; i++) {
+      if (lists[i].length) {
+        queue.push(lists[i].shift())
+        added = true
+      }
+    }
+  }
+
+  // final global shuffle of small blocks to add randomness while preserving separation
+  return queue
+}
+
+function addrPoolKey(cacheKey) {
+  return `addrpool:${cacheKey}`
+}
+
+const centerCity = ref('Güstrow')
+const radiusKm = ref(10)
 const mapEl = ref(null)
 let map = null
 let guessMarker = null
 let actualMarker = null
 let radiusCircle = null
-const center = ref({ lat: 52.52, lon: 13.405 })
+// default to Güstrow
+const center = ref({ lat: 53.7921, lon: 12.2001 })
 const challenge = ref(null)
 const message = ref('')
 const distanceKm = ref(null)
@@ -56,15 +139,21 @@ onMounted(() => {
 async function setCenter() {
   message.value = 'Geocoding stadt...'
   try {
-    const res = await axios.get('https://nominatim.openstreetmap.org/search', {
-      params: { q: centerCity.value, format: 'json', limit: 1 }
-    })
-    if (!res.data || !res.data[0]) {
+    const cacheKey = `geocode:${centerCity.value.toLowerCase()}`
+    let resData = cacheGet(cacheKey)
+    if (!resData) {
+      const res = await axios.get('https://nominatim.openstreetmap.org/search', {
+        params: { q: centerCity.value, format: 'json', limit: 1 }
+      })
+      resData = res.data
+      if (resData && resData[0]) cacheSet(cacheKey, resData, GEOCODE_TTL)
+    }
+    if (!resData || !resData[0]) {
       message.value = 'City not found'
       return
     }
-    center.value.lat = parseFloat(res.data[0].lat)
-    center.value.lon = parseFloat(res.data[0].lon)
+    center.value.lat = parseFloat(resData[0].lat)
+    center.value.lon = parseFloat(resData[0].lon)
     map.setView([center.value.lat, center.value.lon], 13)
     // draw radius circle and fit map to show full radius
     const radiusMeters = Math.max(1000, Math.min(100000, Math.round(radiusKm.value * 1000)))
@@ -72,7 +161,7 @@ async function setCenter() {
     radiusCircle = L.circle([center.value.lat, center.value.lon], { radius: radiusMeters, color: '#3388ff', weight: 1, fillOpacity: 0.05 }).addTo(map)
     map.fitBounds(radiusCircle.getBounds(), { padding: [20, 20] })
     setTimeout(() => map.invalidateSize(), 200)
-    message.value = `Center set to ${res.data[0].display_name}`
+    message.value = `Center set to ${resData[0].display_name}`
   } catch (err) {
     message.value = 'Geocode error'
   }
@@ -89,10 +178,15 @@ async function newChallenge() {
   // Overpass query: find nodes/ways/relations with addr:housenumber and addr:street
   const q = `[out:json][timeout:25];(node["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon}););out center 200;`
   try {
-    const res = await axios.post('https://overpass-api.de/api/interpreter', q, {
-      headers: { 'Content-Type': 'text/plain' }
-    })
-    const els = (res.data && res.data.elements) || []
+    const cacheKey = overpassCacheKey(center.value.lat, center.value.lon, radiusMeters)
+    let els = cacheGet(cacheKey)
+    if (!els) {
+      const res = await axios.post('https://overpass-api.de/api/interpreter', q, {
+        headers: { 'Content-Type': 'text/plain' }
+      })
+      els = (res.data && res.data.elements) || []
+      if (els && els.length) cacheSet(cacheKey, els, OVERPASS_TTL)
+    }
     const addresses = els.map(el => {
       const tags = el.tags || {}
       const street = tags['addr:street']
@@ -110,7 +204,24 @@ async function newChallenge() {
       return
     }
 
-    const pick = addresses[Math.floor(Math.random() * addresses.length)]
+    // Build or read a cached address pool that reduces street-duplication
+    const poolKey = addrPoolKey(cacheKey)
+    let pool = cacheGet(poolKey)
+    if (!pool || !Array.isArray(pool.queue) || !pool.queue.length) {
+      const queue = buildAddressQueue(addresses)
+      pool = { queue, ptr: 0 }
+      cacheSet(poolKey, pool, OVERPASS_TTL)
+    }
+
+    // if we've exhausted the pool, rebuild a fresh shuffled queue
+    if (pool.ptr >= pool.queue.length) {
+      pool = { queue: buildAddressQueue(addresses), ptr: 0 }
+    }
+
+    const pick = pool.queue[pool.ptr]
+    pool.ptr = (pool.ptr || 0) + 1
+    cacheSet(poolKey, pool, OVERPASS_TTL)
+
     challenge.value = pick
     showAnswer.value = false
     message.value = 'Klicke auf die Karte, um zu raten.'
@@ -150,6 +261,16 @@ function handleGuess(latlng) {
   if (actualMarker) {
     actualMarker.setPopupContent(`Tatsächlich: ${challenge.value.street} ${challenge.value.housenumber}`)
     actualMarker.openPopup()
+  }
+  // fit map to show both guess and actual location with padding
+  try {
+    const bounds = L.latLngBounds([
+      [challenge.value.lat, challenge.value.lon],
+      [latlng.lat, latlng.lng]
+    ])
+    map.fitBounds(bounds, { padding: [80, 80], maxZoom: 16 })
+  } catch (e) {
+    // ignore if map not ready
   }
 }
 
