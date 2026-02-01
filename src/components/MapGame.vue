@@ -66,6 +66,14 @@ const center = ref({ lat: 53.7921, lon: 12.2001 })
 // Cache helpers
 const GEOCODE_TTL = 24 * 60 * 60 * 1000
 const OVERPASS_TTL = 6 * 60 * 60 * 1000
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.nchc.org.tw/api/interpreter'
+]
+
+let overpassInFlight = false
+let lastOverpassRequestAt = 0
 
 function cacheGet(key) {
   try {
@@ -96,8 +104,40 @@ function overpassCacheKey(lat, lon, radiusMeters) {
   return `overpass:${rlat}:${rlon}:${Math.round(radiusMeters)}`
 }
 
-function addrPoolKey(cacheKey) {
-  return `addrpool:${cacheKey}`
+function addrPoolKey(cacheKey, showAddr, showMedical, showVillage) {
+  const modes = [showAddr ? 1 : 0, showMedical ? 1 : 0, showVillage ? 1 : 0].join('')
+  return `addrpool:${cacheKey}:${modes}`
+}
+
+async function fetchOverpassWithRetry(query) {
+  const now = Date.now()
+  const minDelay = 1200
+  const sinceLast = now - lastOverpassRequestAt
+  if (sinceLast < minDelay) {
+    await new Promise(r => setTimeout(r, minDelay - sinceLast))
+  }
+
+  let lastError = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length]
+    try {
+      lastOverpassRequestAt = Date.now()
+      const res = await axios.post(endpoint, query, {
+        headers: { 'Content-Type': 'text/plain' }
+      })
+      return res
+    } catch (err) {
+      lastError = err
+      const status = err?.response?.status
+      if (status === 429 || status === 504 || status === 502) {
+        const backoff = 1200 * Math.pow(2, attempt)
+        await new Promise(r => setTimeout(r, backoff))
+        continue
+      }
+      break
+    }
+  }
+  throw lastError
 }
 
 // Haversine distance
@@ -124,13 +164,18 @@ function shuffle(arr) {
   return arr
 }
 
+// Check if type is medical facility
+function isMedicalFacility(type) {
+  return ['hospital', 'clinic', 'doctors', 'nursing_home', 'social_facility'].includes(type)
+}
+
 // Build address queue
 function buildAddressQueue(addresses) {
-  const nursingHomes = addresses.filter(a => a.type === 'nursing_home')
+  const medicalFacilities = addresses.filter(a => isMedicalFacility(a.type))
   const villages = addresses.filter(a => a.type === 'village')
   const regularAddresses = addresses.filter(a => a.type === 'address')
 
-  const shuffledNursingHomes = shuffle([...nursingHomes])
+  const shuffledMedical = shuffle([...medicalFacilities])
   const shuffledVillages = shuffle([...villages])
   const shuffledRegular = shuffle([...regularAddresses])
 
@@ -157,12 +202,12 @@ function buildAddressQueue(addresses) {
   }
 
   const queue = []
-  let nhIdx = 0
+  let medIdx = 0
   let vIdx = 0
   for (let i = 0; i < streetQueue.length; i++) {
-    if ((i + 1) % 5 === 0 && nhIdx < shuffledNursingHomes.length) {
-      queue.push(shuffledNursingHomes[nhIdx])
-      nhIdx++
+    if ((i + 1) % 5 === 0 && medIdx < shuffledMedical.length) {
+      queue.push(shuffledMedical[medIdx])
+      medIdx++
     } else if ((i + 1) % 7 === 0 && vIdx < shuffledVillages.length) {
       queue.push(shuffledVillages[vIdx])
       vIdx++
@@ -171,9 +216,9 @@ function buildAddressQueue(addresses) {
     }
   }
 
-  while (nhIdx < shuffledNursingHomes.length) {
-    queue.push(shuffledNursingHomes[nhIdx])
-    nhIdx++
+  while (medIdx < shuffledMedical.length) {
+    queue.push(shuffledMedical[medIdx])
+    medIdx++
   }
   while (vIdx < shuffledVillages.length) {
     queue.push(shuffledVillages[vIdx])
@@ -211,31 +256,123 @@ async function setCenter() {
 
 // New challenge
 async function newChallenge() {
+  if (overpassInFlight) {
+    message.value = 'Bitte warten...'
+    return
+  }
   message.value = 'Suche adressen...'
   if (!center.value.lat || !center.value.lon) {
     await setCenter()
   }
 
   const radiusMeters = Math.max(1000, Math.min(100000, Math.round(radiusKm.value * 1000)))
-  const q = `[out:json][timeout:25];(node["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});node["amenity"="nursing_home"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["amenity"="nursing_home"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["amenity"="nursing_home"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});node["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon}););out center 200;`
+
+  const qAddresses = `
+  [out:json][timeout:25];
+  (
+    node["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+  );
+  out tags center 800;
+  `
+
+  const qMedical = `
+  [out:json][timeout:25];
+  (
+    node["amenity"="hospital"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["amenity"="hospital"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["amenity"="hospital"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+
+    node["amenity"="clinic"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["amenity"="clinic"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["amenity"="clinic"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+
+    node["amenity"="doctors"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["amenity"="doctors"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["amenity"="doctors"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+
+    node["amenity"="nursing_home"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["amenity"="nursing_home"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["amenity"="nursing_home"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+
+    node["amenity"="social_facility"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["amenity"="social_facility"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["amenity"="social_facility"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+  );
+  out tags center 400;
+  `
+
+  const qPlaces = `
+  [out:json][timeout:25];
+  (
+    node["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+
+    node["place"="hamlet"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["place"="hamlet"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["place"="hamlet"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+
+    node["place"="locality"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    way["place"="locality"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    relation["place"="locality"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+  );
+  out tags center 400;
+  `
 
   try {
+    overpassInFlight = true
     const cacheKey = overpassCacheKey(center.value.lat, center.value.lon, radiusMeters)
-    let els = cacheGet(cacheKey)
-    if (!els) {
-      const res = await axios.post('https://overpass-api.de/api/interpreter', q, {
-        headers: { 'Content-Type': 'text/plain' }
-      })
-      els = (res.data && res.data.elements) || []
-      if (els && els.length) cacheSet(cacheKey, els, OVERPASS_TTL)
+    let els = []
+
+    if (showAddresses.value) {
+      const addrKey = `${cacheKey}:addr`
+      let addrEls = cacheGet(addrKey)
+      if (!addrEls) {
+        const res = await fetchOverpassWithRetry(qAddresses)
+        addrEls = (res.data && res.data.elements) || []
+        if (addrEls && addrEls.length) cacheSet(addrKey, addrEls, OVERPASS_TTL)
+      }
+      els = els.concat(addrEls || [])
+    }
+
+    if (showNursingHomes.value) {
+      const medKey = `${cacheKey}:med`
+      let medEls = cacheGet(medKey)
+      if (!medEls) {
+        const res = await fetchOverpassWithRetry(qMedical)
+        medEls = (res.data && res.data.elements) || []
+        if (medEls && medEls.length) cacheSet(medKey, medEls, OVERPASS_TTL)
+      }
+      els = els.concat(medEls || [])
+    }
+
+    if (showVillages.value) {
+      const placeKey = `${cacheKey}:place`
+      let placeEls = cacheGet(placeKey)
+      if (!placeEls) {
+        const res = await fetchOverpassWithRetry(qPlaces)
+        placeEls = (res.data && res.data.elements) || []
+        if (placeEls && placeEls.length) cacheSet(placeKey, placeEls, OVERPASS_TTL)
+      }
+      els = els.concat(placeEls || [])
     }
 
     const addresses = els
-      .map((el, idx) => {
+      .map((el) => {
         const tags = el.tags || {}
         const street = tags['addr:street']
         const housenumber = tags['addr:housenumber']
         const name = tags['name']
+        const operator = tags['operator']
+        const brand = tags['brand']
+        
+        // Extract label: prefer name, then operator, then brand
+        const label = name || operator || brand
+        // Medical label should be built from name + operator only
+        const medicalLabel = name ? (operator ? `${name} – ${operator}` : name) : (operator || '')
+        
         let lat = undefined,
           lon = undefined
         
@@ -253,12 +390,28 @@ async function newChallenge() {
           return null
         }
         
+        // Regular street address
         if (street && housenumber) {
-          return { street, housenumber, lat, lon, type: 'address' }
-        } else if (name && tags['amenity'] === 'nursing_home') {
-          return { street: name, housenumber: '', lat, lon, type: 'nursing_home' }
-        } else if (name && tags['place'] === 'village') {
-          return { street: name, housenumber: '', lat, lon, type: 'village' }
+          return { street, housenumber, label: '', lat, lon, type: 'address' }
+        }
+        
+        // Medical facilities: keep amenity type separate
+        const amenity = tags['amenity']
+        if (medicalLabel && ['hospital', 'clinic', 'doctors', 'nursing_home', 'social_facility'].includes(amenity)) {
+          // Add address info to housenumber for deduplication
+          let addressSuffix = ''
+          if (street && housenumber) {
+            addressSuffix = `, ${street} ${housenumber}`
+          } else if (street) {
+            addressSuffix = `, ${street}`
+          }
+          return { street: medicalLabel, housenumber: addressSuffix, label: medicalLabel, lat, lon, type: amenity }
+        }
+        
+        // Village/settlement (village, hamlet, locality)
+        const placeType = tags['place']
+        if (label && ['village', 'hamlet', 'locality'].includes(placeType)) {
+          return { street: label, housenumber: '', label, lat, lon, type: 'village' }
         }
         return null
       })
@@ -267,7 +420,7 @@ async function newChallenge() {
 
     const filteredAddresses = addresses.filter(a => {
       if (a.type === 'address') return showAddresses.value
-      if (a.type === 'nursing_home') return showNursingHomes.value
+      if (isMedicalFacility(a.type)) return showNursingHomes.value
       if (a.type === 'village') return showVillages.value
       return false
     })
@@ -277,7 +430,7 @@ async function newChallenge() {
       return
     }
 
-    const poolKey = addrPoolKey(cacheKey)
+    const poolKey = addrPoolKey(cacheKey, showAddresses.value, showNursingHomes.value, showVillages.value)
     let pool = cacheGet(poolKey)
     if (!pool || !Array.isArray(pool.queue) || !pool.queue.length) {
       const queue = buildAddressQueue(filteredAddresses)
@@ -303,7 +456,14 @@ async function newChallenge() {
       console.error('mapRef.value.zoomToRadius not available')
     }
   } catch (err) {
-    message.value = 'Overpass query failed'
+    const status = err?.response?.status
+    if (status === 429) {
+      message.value = 'Zu viele Anfragen. Bitte 1–2 Minuten warten und erneut versuchen.'
+    } else {
+      message.value = 'Overpass query failed'
+    }
+  } finally {
+    overpassInFlight = false
   }
 }
 

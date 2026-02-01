@@ -30,7 +30,7 @@
           </label>
           <label class="flex items-center gap-2">
             <input type="checkbox" v-model="localShowNursingHomes" />
-            <span>Pflegeheime</span>
+            <span>Medizinische Einrichtungen</span>
           </label>
           <label class="flex items-center gap-2">
             <input type="checkbox" v-model="localShowVillages" />

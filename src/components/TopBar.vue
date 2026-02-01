@@ -9,10 +9,13 @@
       </button>
       <div v-if="challenge" class="text-white text-sm">
         <strong>Finde:</strong>&nbsp;{{ centerCity }},
-        <span v-if="challenge.type === 'nursing_home' || challenge.type === 'village'">
-          {{ challenge.street }}
+        <span v-if="getTypeLabel(challenge.type)" class="font-medium text-blue-300">
+          {{ getTypeLabel(challenge.type) }}
         </span>
-        <span v-else>{{ challenge.street }} {{ challenge.housenumber }}</span>
+        <span>
+          {{ challenge.street }}
+          <span v-if="challenge.housenumber">{{ challenge.housenumber }}</span>
+        </span>
       </div>
     </div>
 
@@ -37,6 +40,20 @@
 </template>
 
 <script setup>
+const typeLabels = {
+  address: '',
+  hospital: 'Krankenhaus',
+  clinic: 'Klinik',
+  doctors: 'Arzt/Praxis',
+  nursing_home: 'Pflegeheim',
+  social_facility: 'Sozialeinrichtung',
+  village: ''
+}
+
+function getTypeLabel(type) {
+  return typeLabels[type] || ''
+}
+
 defineProps({
   challenge: Object,
   centerCity: String,
