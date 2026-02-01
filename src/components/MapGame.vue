@@ -304,21 +304,18 @@ async function newChallenge() {
   `
 
   const qPlaces = `
-  [out:json][timeout:25];
+  [out:json][timeout:60];
+  area["name"="${centerCity.value}"]["boundary"="administrative"]["admin_level"="8"]->.a;
   (
-    node["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-    way["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-    relation["place"="village"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    node(area.a)["place"~"village|hamlet|suburb|neighbourhood"]["name"];
+    way(area.a)["place"~"village|hamlet|suburb|neighbourhood"]["name"];
+    relation(area.a)["place"~"village|hamlet|suburb|neighbourhood"]["name"];
 
-    node["place"="hamlet"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-    way["place"="hamlet"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-    relation["place"="hamlet"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-
-    node["place"="locality"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-    way["place"="locality"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
-    relation["place"="locality"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});
+    // Ortsteile / administrative Untergliederungen
+    relation(area.a)["boundary"="administrative"]["admin_level"~"9|10"]["name"];
+    way(area.a)["boundary"="administrative"]["admin_level"~"9|10"]["name"];
   );
-  out tags center 400;
+  out tags center;
   `
 
   try {
@@ -408,9 +405,9 @@ async function newChallenge() {
           return { street: medicalLabel, housenumber: addressSuffix, label: medicalLabel, lat, lon, type: amenity }
         }
         
-        // Village/settlement (village, hamlet, locality)
+        // Village/settlement (village, hamlet, suburb, neighbourhood, locality)
         const placeType = tags['place']
-        if (label && ['village', 'hamlet', 'locality'].includes(placeType)) {
+        if (label && ['village', 'hamlet', 'suburb', 'neighbourhood', 'locality'].includes(placeType)) {
           return { street: label, housenumber: '', label, lat, lon, type: 'village' }
         }
         return null
