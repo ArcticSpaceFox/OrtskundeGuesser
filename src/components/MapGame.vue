@@ -8,7 +8,7 @@
           <button @click="setCenter">Mitte setzen</button> -->
           <button @click="newChallenge">Neue Adresse</button>
         </div>
-          <div class="challenge-text" v-if="challenge"><strong>Finde:</strong>&nbsp;{{ centerCity }}, {{ challenge.street }} {{ challenge.housenumber }}</div>
+          <div class="challenge-text" v-if="challenge"><strong>Finde:</strong>&nbsp;{{ centerCity }}, <span v-if="challenge.type === 'nursing_home'">{{ challenge.street }}</span><span v-else>{{ challenge.street }} {{ challenge.housenumber }}</span></div>
       </div>
       <div class="flex">
         <div class="scorebox w-56 text-right">
@@ -93,17 +93,6 @@ function overpassCacheKey(lat, lon, radiusMeters) {
 }
 
 function buildAddressQueue(addresses) {
-  // group by street
-  const byStreet = {}
-  addresses.forEach(a => {
-    const s = (a.street || '').trim()
-    if (!byStreet[s]) byStreet[s] = []
-    // use unique key to avoid duplicate housenumbers
-    const key = `${s}||${a.housenumber}`
-    byStreet[s].push(a)
-  })
-
-  const streets = Object.keys(byStreet)
   const shuffle = (arr) => {
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
@@ -114,23 +103,57 @@ function buildAddressQueue(addresses) {
     return arr
   }
 
-  // prepare per-street shuffled lists
+  // separate nursing homes and regular addresses
+  const nursingHomes = addresses.filter(a => a.type === 'nursing_home')
+  const regularAddresses = addresses.filter(a => a.type === 'address')
+
+  // shuffle each group separately
+  const shuffledNursingHomes = shuffle([...nursingHomes])
+  const shuffledRegular = shuffle([...regularAddresses])
+
+  // group regular addresses by street for variety
+  const byStreet = {}
+  shuffledRegular.forEach(a => {
+    const s = (a.street || '').trim()
+    if (!byStreet[s]) byStreet[s] = []
+    byStreet[s].push(a)
+  })
+
+  const streets = Object.keys(byStreet)
   const lists = streets.map(s => shuffle([...byStreet[s]]))
 
-  // round-robin merge so consecutive picks come from different streets
-  const queue = []
+  // round-robin merge of streets
+  const streetQueue = []
   let added = true
   while (added) {
     added = false
     for (let i = 0; i < lists.length; i++) {
       if (lists[i].length) {
-        queue.push(lists[i].shift())
+        streetQueue.push(lists[i].shift())
         added = true
       }
     }
   }
 
-  // final global shuffle of small blocks to add randomness while preserving separation
+  // mix with nursing homes: every 4th item should be a nursing home if available
+  const queue = []
+  let nursingHomeIdx = 0
+  for (let i = 0; i < streetQueue.length; i++) {
+    if ((i + 1) % 4 === 0 && nursingHomeIdx < shuffledNursingHomes.length) {
+      // every 4th position gets a nursing home
+      queue.push(shuffledNursingHomes[nursingHomeIdx])
+      nursingHomeIdx++
+    } else {
+      queue.push(streetQueue[i])
+    }
+  }
+
+  // append remaining nursing homes if any
+  while (nursingHomeIdx < shuffledNursingHomes.length) {
+    queue.push(shuffledNursingHomes[nursingHomeIdx])
+    nursingHomeIdx++
+  }
+
   return queue
 }
 
@@ -260,8 +283,8 @@ async function newChallenge() {
     await setCenter()
   }
   const radiusMeters = Math.max(1000, Math.min(100000, Math.round(radiusKm.value * 1000)))
-  // Overpass query: find nodes/ways/relations with addr:housenumber and addr:street
-  const q = `[out:json][timeout:25];(node["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon}););out center 200;`
+  // Overpass query: find addresses (with street+housenumber) and nursing homes
+  const q = `[out:json][timeout:25];(node["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});node["amenity"="nursing_home"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});way["amenity"="nursing_home"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon});relation["amenity"="nursing_home"]["name"](around:${radiusMeters},${center.value.lat},${center.value.lon}););out center 200;`
   try {
     const cacheKey = overpassCacheKey(center.value.lat, center.value.lon, radiusMeters)
     let els = cacheGet(cacheKey)
@@ -276,12 +299,19 @@ async function newChallenge() {
       const tags = el.tags || {}
       const street = tags['addr:street']
       const housenumber = tags['addr:housenumber']
+      const name = tags['name']
       let lat = el.lat, lon = el.lon
       if (!lat && el.center) {
         lat = el.center.lat
         lon = el.center.lon
       }
-      return street && housenumber && lat && lon ? { street, housenumber, lat, lon } : null
+      // return either address (street+housenumber) or nursing home (name only)
+      if (street && housenumber && lat && lon) {
+        return { street, housenumber, lat, lon, type: 'address' }
+      } else if (name && lat && lon && tags['amenity'] === 'nursing_home') {
+        return { street: name, housenumber: '', lat, lon, type: 'nursing_home' }
+      }
+      return null
     }).filter(Boolean)
 
     if (!addresses.length) {
