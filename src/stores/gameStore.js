@@ -89,7 +89,11 @@ export const useGameStore = defineStore('game', {
       let points = 0
 
       if (distanceValue <= 0.5) {
-        points = Math.round(Math.max(0, (1 - distanceValue / 0.5) * 100))
+        // Ease-out curve: steep near 0, flattens towards 0.5km
+        // 0km = 100 points, 0.1km = ~99 points, 0.5km = 0 points
+        const normalizedDistance = distanceValue / 0.5
+        const easeOutFactor = 1 - (normalizedDistance * normalizedDistance)
+        points = Math.round(Math.max(0, easeOutFactor * 100))
         this.totalScore = (this.totalScore || 0) + points
         this.roundsCounted = (this.roundsCounted || 0) + 1
       }
