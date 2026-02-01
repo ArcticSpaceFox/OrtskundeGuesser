@@ -310,10 +310,13 @@ async function newChallenge() {
     challenge.value = pick
     showAnswer.value = false
     message.value = 'Klicke auf die Karte, um zu raten.'
+    distanceKm.value = null
 
-    // clear previous markers
+    // clear previous markers and distance visualization
     if (guessMarker) { map.removeLayer(guessMarker); guessMarker = null }
     if (actualMarker) { map.removeLayer(actualMarker); actualMarker = null }
+    if (distanceLine) { map.removeLayer(distanceLine); distanceLine = null }
+    if (distanceLabel) { map.removeLayer(distanceLabel); distanceLabel = null }
     // update radius circle to reflect current radius and center and fit map
     if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null }
     radiusCircle = L.circle([center.value.lat, center.value.lon], { radius: radiusMeters, color: '#3388ff', weight: 1, fillOpacity: 0.05 }).addTo(map)
