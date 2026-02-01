@@ -1,7 +1,7 @@
 <script setup>
-import HelloWorld from './components/HelloWorld.vue'
+import MapGame from './components/MapGame.vue'
 </script>
 
 <template>
-  <HelloWorld msg="Vite + Vue" />
+  <MapGame />
 </template>
