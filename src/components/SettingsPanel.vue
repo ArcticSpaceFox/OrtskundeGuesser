@@ -39,7 +39,7 @@
         </div>
       </div>
 
-      <div class="flex gap-2 justify-end">
+      <div class="flex gap-2 justify-end flex-wrap">
         <button
           @click="handleApply"
           class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium text-sm"
@@ -51,6 +51,12 @@
           class="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-black rounded font-medium text-sm"
         >
           Abbrechen
+        </button>
+        <button
+          @click="$emit('restart')"
+          class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded font-medium text-sm"
+        >
+          Spiel neustarten
         </button>
         <button
           @click="$emit('reset-score')"
@@ -81,7 +87,7 @@ const props = defineProps({
   showVillages: Boolean
 })
 
-const emit = defineEmits(['close', 'apply', 'reset-score', 'reset-all'])
+const emit = defineEmits(['close', 'apply', 'reset-score', 'reset-all', 'restart'])
 
 const localCity = ref(props.city)
 const localRadius = ref(props.radius)

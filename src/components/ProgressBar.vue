@@ -1,15 +1,22 @@
 <template>
-  <div class="fixed top-16 left-0 right-0 h-3 bg-black/10 z-40">
+  <div class="fixed top-16 left-0 right-0 h-3 bg-black/10 z-40 relative">
     <div
       class="h-full transition-all duration-300"
       :style="{ width: progressPercent + '%', background: progressColor }"
     ></div>
+    <div
+      v-if="label"
+      class="absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-white/90 drop-shadow"
+    >
+      {{ label }}
+    </div>
   </div>
 </template>
 
 <script setup>
 defineProps({
   progressPercent: Number,
-  progressColor: String
+  progressColor: String,
+  label: String
 })
 </script>

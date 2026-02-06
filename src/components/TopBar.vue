@@ -8,7 +8,8 @@
         Neue Adresse
       </button>
       <div v-if="challenge" class="text-white text-sm">
-        <strong>Finde:</strong>&nbsp;{{ centerCity }},
+        <strong>Finde:</strong>&nbsp;{{ centerCity }}
+        <span v-if="challenge.suburb" class="text-gray-300">, {{ challenge.suburb }}</span>,
         <span v-if="getTypeLabel(challenge.type)" class="font-medium text-blue-300">
           {{ getTypeLabel(challenge.type) }}
         </span>
@@ -21,8 +22,8 @@
 
     <div class="flex items-center gap-3">
       <div class="text-white text-sm text-right">
-        <div>Score: <strong>{{ totalScore }}</strong></div>
-        <div class="text-xs">Gezählte Runden: {{ roundsCounted }} / Gespielt: {{ roundsPlayed }}</div>
+        <div>Score: <strong>{{ totalScore }}</strong> / {{ maxScore }}</div>
+        <div class="text-xs">Runde: {{ roundsPlayed }} / {{ totalRounds }}</div>
         <div v-if="lastPoints !== null" class="text-xs">
           Letzte Punkte:
           <strong v-if="lastPoints > 0" class="text-green-400">+{{ lastPoints }}</strong>
@@ -60,7 +61,9 @@ defineProps({
   totalScore: Number,
   roundsPlayed: Number,
   roundsCounted: Number,
-  lastPoints: [Number, null]
+  lastPoints: [Number, null],
+  totalRounds: Number,
+  maxScore: Number
 })
 
 defineEmits(['new-challenge', 'open-settings'])

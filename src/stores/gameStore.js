@@ -10,6 +10,9 @@ export const useGameStore = defineStore('game', {
     showNursingHomes: true,
     showVillages: true,
 
+    // Round settings
+    totalRounds: 10,
+
     // Score and rounds
     totalScore: 0,
     roundsPlayed: 0,
@@ -23,7 +26,10 @@ export const useGameStore = defineStore('game', {
     message: '',
 
     // UI state
-    showSettings: false
+    showSettings: false,
+
+    // Game phase: 'start' | 'playing' | 'end'
+    gamePhase: 'start'
   }),
 
   getters: {
