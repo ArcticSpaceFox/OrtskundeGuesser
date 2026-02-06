@@ -20,14 +20,16 @@
         :rounds-played="roundsPlayed"
         :rounds-counted="roundsCounted"
         :last-points="lastPoints"
+        :show-answer="showAnswer"
         @new-challenge="newChallenge"
         @open-settings="showSettings = true"
+        @skip-round="skipRound"
       />
 
       <ProgressBar
-        :progress-percent="timerPercent"
-        :progress-color="timerColor"
-        :label="timerLabel"
+        :progress-percent="displayPercent"
+        :progress-color="displayColor"
+        :label="displayLabel"
       />
 
       <GameMap
@@ -81,7 +83,7 @@ import StartScreen from './StartScreen.vue'
 import EndScreen from './EndScreen.vue'
 
 const gameStore = useGameStore()
-const { challenge, totalScore, roundsPlayed, roundsCounted, lastPoints, message, distanceKm, progressPercent, progressColor, showAddresses, showNursingHomes, showVillages, showSettings, gamePhase } = storeToRefs(gameStore)
+const { challenge, totalScore, roundsPlayed, roundsCounted, lastPoints, message, distanceKm, progressPercent, progressColor, showAddresses, showNursingHomes, showVillages, showSettings, showAnswer, gamePhase } = storeToRefs(gameStore)
 gameStore.init()
 
 const mapRef = ref(null)
@@ -109,6 +111,19 @@ function startRoundTimer() {
       try {
         gameStore.recordGuess(999)
       } catch (e) {}
+      // reveal correct location (award 0 points) and zoom in
+      if (challenge.value && mapRef.value && mapRef.value.showGuess) {
+        const actual = { lat: Number(challenge.value.lat), lon: Number(challenge.value.lon) }
+        const guessLatLng = { lat: Number(challenge.value.lat), lng: Number(challenge.value.lon) }
+        try {
+          mapRef.value.showGuess(guessLatLng, actual, 0)
+        } catch (e) {}
+        try {
+          mapRef.value.zoomToRadius(actual.lat, actual.lon, Math.min(radiusKm.value, 5))
+        } catch (e) {}
+      }
+      // start the 7s next-round countdown
+      startNextCountdown()
       if (roundsPlayed.value >= gameStore.totalRounds) {
         setTimeout(() => {
           gamePhase.value = 'end'
@@ -119,6 +134,68 @@ function startRoundTimer() {
 }
 
 onUnmounted(() => clearRoundTimer())
+// Next-round countdown (after a guess)
+const nextRoundCountdown = ref(0)
+let nextTimerId = null
+
+function clearNextCountdown() {
+  if (nextTimerId) {
+    clearInterval(nextTimerId)
+    nextTimerId = null
+  }
+  nextRoundCountdown.value = 0
+}
+
+function startNextCountdown() {
+  clearNextCountdown()
+  // only start if there are still rounds remaining
+  if (roundsPlayed.value >= gameStore.totalRounds) return
+  // 7 seconds as requested
+  nextRoundCountdown.value = 7
+  nextTimerId = setInterval(() => {
+    if (nextRoundCountdown.value > 0) {
+      nextRoundCountdown.value -= 1
+    }
+    if (nextRoundCountdown.value <= 0) {
+      clearNextCountdown()
+      // Start next challenge
+      setTimeout(() => {
+        if (roundsPlayed.value >= gameStore.totalRounds) {
+          gamePhase.value = 'end'
+        } else {
+          newChallenge()
+        }
+      }, 200)
+    }
+  }, 1000)
+}
+
+function skipRound() {
+  // Skip current round: award no points, treat like timeout
+  if (!challenge.value || showAnswer.value) return
+  clearRoundTimer()
+  try {
+    gameStore.recordGuess(999)
+  } catch (e) {}
+  message.value = 'Runde übersprungen.'
+  // reveal correct location (award 0 points) and zoom in — same behavior as timeout
+  if (challenge.value && mapRef.value && mapRef.value.showGuess) {
+    const actual = { lat: Number(challenge.value.lat), lon: Number(challenge.value.lon) }
+    const guessLatLng = { lat: Number(challenge.value.lat), lng: Number(challenge.value.lon) }
+    try {
+      mapRef.value.showGuess(guessLatLng, actual, 0)
+    } catch (e) {}
+    try {
+      // Zoom further in when skipping the round (closer than normal timeout)
+      mapRef.value.zoomToRadius(actual.lat, actual.lon, Math.min(radiusKm.value, 0.5))
+    } catch (e) {}
+  }
+  startNextCountdown()
+}
+
+onUnmounted(() => {
+  clearNextCountdown()
+})
 // Timer-derived computed values for the progress bar
 const TOTAL_SECONDS = 30
 const timerPercent = computed(() => {
@@ -131,6 +208,25 @@ const timerColor = computed(() => {
 })
 
 const timerLabel = computed(() => `${timerRemaining.value}s`)
+// Next-countdown derived percent/label for ProgressBar
+const NEXT_TOTAL = 7
+const nextTimerPercent = computed(() => {
+  if (nextRoundCountdown.value <= 0) return 0
+  return Math.max(0, Math.min(100, (nextRoundCountdown.value / NEXT_TOTAL) * 100))
+})
+
+const nextTimerColor = computed(() => {
+  if (nextRoundCountdown.value <= 2) return '#dc2626'
+  if (nextRoundCountdown.value <= 4) return '#f59e0b'
+  return '#10b981'
+})
+
+const nextTimerLabel = computed(() => nextRoundCountdown.value > 0 ? `Nächste Runde in ${nextRoundCountdown.value}s` : '')
+
+// decide what to show in ProgressBar: during active round show timer, after answer show next-countdown
+const displayPercent = computed(() => (nextRoundCountdown.value > 0 && showAnswer.value) ? nextTimerPercent.value : timerPercent.value)
+const displayColor = computed(() => (nextRoundCountdown.value > 0 && showAnswer.value) ? nextTimerColor.value : timerColor.value)
+const displayLabel = computed(() => (nextRoundCountdown.value > 0 && showAnswer.value) ? nextTimerLabel.value : timerLabel.value)
 const centerCity = ref('Güstrow')
 const radiusKm = ref(10)
 const center = ref({ lat: 53.7921, lon: 12.2001 })
@@ -392,6 +488,9 @@ async function newChallenge() {
 
   try {
     overpassInFlight = true
+    // clear any pending next-round countdown or timers when explicitly starting a new challenge
+    clearNextCountdown()
+    clearRoundTimer()
     const cacheKey = overpassCacheKey(center.value.lat, center.value.lon, radiusMeters)
     let els = []
 
@@ -573,6 +672,8 @@ function handleMapClick(latlng) {
 
   gameStore.recordGuess(distance)
   clearRoundTimer()
+  // start 6s next-round countdown
+  startNextCountdown()
   if (distance <= 0.5) {
     message.value = `Du warst ${distance.toFixed(2)} km entfernt. Runde gezählt: +${gameStore.lastPoints} Punkte.`
   } else {
