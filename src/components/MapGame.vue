@@ -25,7 +25,7 @@
         :last-points="lastPoints"
         :show-answer="showAnswer"
         @new-challenge="newChallenge"
-        @open-settings="showSettings = true"
+        @give-up="handleGiveUp"
         @skip-round="skipRound"
       />
 
@@ -196,6 +196,29 @@ function skipRound() {
     } catch (e) {}
   }
   startNextCountdown()
+}
+
+function handleGiveUp() {
+  // stop timers
+  clearRoundTimer()
+  clearNextCountdown()
+  // figure how many rounds remain
+  const remaining = Math.max(0, gameStore.totalRounds - (roundsPlayed.value || 0))
+  if (remaining <= 0) {
+    gamePhase.value = 'end'
+    return
+  }
+  message.value = `Aufgegeben — ${remaining} Runden werden mit 0 bewertet.`
+  // apply 0-point records for remaining rounds
+  for (let i = 0; i < remaining; i++) {
+    try {
+      gameStore.recordGuess(999)
+    } catch (e) {}
+  }
+  // ensure we transition to end screen shortly
+  setTimeout(() => {
+    gamePhase.value = 'end'
+  }, 300)
 }
 
 onUnmounted(() => {

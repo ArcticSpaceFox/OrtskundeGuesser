@@ -26,7 +26,7 @@
       </div>
     </div>
 
-    <!-- Right: skip + settings -->
+    <!-- Right: skip + give up -->
     <div class="flex items-center gap-3 w-1/4 justify-end pr-2">
       <button
         v-if="!showAnswer"
@@ -36,10 +36,10 @@
         Runde überspringen
       </button>
       <button
-        @click="$emit('open-settings')"
-        class="text-xl hover:scale-110 transition ml-2"
+        @click="$emit('give-up')"
+        class="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium ml-2"
       >
-        ⚙️
+        Aufgeben
       </button>
     </div>
   </header>
@@ -72,5 +72,5 @@ defineProps({
   ,showAnswer: Boolean
 })
 
-defineEmits(['new-challenge', 'open-settings', 'skip-round'])
+defineEmits(['new-challenge', 'give-up', 'skip-round'])
 </script>
