@@ -1,5 +1,10 @@
 [
   {
+    "hash": "570aa5c",
+    "date": "2026-02-06",
+    "message": "v5.4 - Quitting was never an option - added quit button so a player can exit a current round"
+  },
+  {
     "hash": "ab5ecc2",
     "date": "2026-02-06",
     "message": "v5.3 - Update Screen was added that shows all git commits"

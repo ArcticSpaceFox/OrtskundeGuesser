@@ -22,7 +22,7 @@ const props = defineProps({
   radiusKm: Number
 })
 
-const emit = defineEmits(['click', 'update:distanceLine'])
+const emit = defineEmits(['click', 'update:distanceLine', 'ready'])
 
 onMounted(() => {
   map = L.map(mapEl.value).setView([props.center.lat, props.center.lon], 12)
@@ -33,6 +33,8 @@ onMounted(() => {
   }).addTo(map)
   map.on('click', (e) => emit('click', e.latlng))
   setTimeout(() => map.invalidateSize(), 200)
+  // Emit ready so parent can wait for the map to be initialized
+  setTimeout(() => emit('ready'), 300)
 })
 
 function setCenter(lat, lon) {

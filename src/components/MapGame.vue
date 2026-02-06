@@ -13,6 +13,7 @@
     />
 
     <Updates v-if="gamePhase === 'start' && showUpdates" @close="showUpdates = false" />
+    <LoadingScreen v-if="gamePhase === 'loading'" :status="loadingStatus" :percent="loadingPercent" :color="loadingColor" @cancel="handleCancelLoading" />
 
     <!-- Game Screen -->
     <template v-else-if="gamePhase === 'playing'">
@@ -40,6 +41,7 @@
         :center="center"
         :radius-k-m="radiusKm.value"
         @click="handleMapClick"
+        @ready="onMapReady"
       />
 
       <BottomInfo
@@ -73,7 +75,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { useGameStore } from '../stores/gameStore'
 import { storeToRefs } from 'pinia'
@@ -84,6 +86,7 @@ import BottomInfo from './BottomInfo.vue'
 import SettingsPanel from './SettingsPanel.vue'
 import StartScreen from './StartScreen.vue'
 import Updates from './Updates.vue'
+import LoadingScreen from './LoadingScreen.vue'
 import EndScreen from './EndScreen.vue'
 
 const gameStore = useGameStore()
@@ -91,7 +94,11 @@ const { challenge, totalScore, roundsPlayed, roundsCounted, lastPoints, message,
 gameStore.init()
 
 const mapRef = ref(null)
+const mapReady = ref(false)
 const showUpdates = ref(false)
+const loadingStatus = ref('')
+const loadingPercent = ref(0)
+const loadingColor = ref('#3b82f6')
 // Round timer (30s)
 const timerRemaining = ref(30)
 let timerId = null
@@ -104,6 +111,7 @@ function clearRoundTimer() {
 }
 
 function startRoundTimer() {
+  console.debug('startRoundTimer()')
   clearRoundTimer()
   timerRemaining.value = 30
   timerId = setInterval(() => {
@@ -112,6 +120,7 @@ function startRoundTimer() {
     }
     if (timerRemaining.value <= 0) {
       clearRoundTimer()
+      console.debug('round timer expired')
       message.value = 'Zeit abgelaufen.'
       try {
         gameStore.recordGuess(999)
@@ -452,6 +461,7 @@ async function setCenter() {
 
 // New challenge
 async function newChallenge() {
+  console.debug('newChallenge() start, overpassInFlight=', overpassInFlight)
   if (overpassInFlight) {
     message.value = 'Bitte warten...'
     return
@@ -516,6 +526,7 @@ async function newChallenge() {
 
   try {
     overpassInFlight = true
+    console.debug('overpassInFlight set to true')
     // clear any pending next-round countdown or timers when explicitly starting a new challenge
     clearNextCountdown()
     clearRoundTimer()
@@ -616,7 +627,7 @@ async function newChallenge() {
         continue
       }
     }
-    console.log('Parsed addresses:', addresses.slice(0, 5))
+    console.debug('Parsed addresses (sample):', addresses.slice(0, 5))
 
     const filteredAddresses = addresses.filter(a => {
       if (a.type === 'address') return showAddresses.value
@@ -646,6 +657,7 @@ async function newChallenge() {
     pool.ptr = (pool.ptr || 0) + 1
     cacheSet(poolKey, pool, OVERPASS_TTL)
 
+    console.debug('Picking challenge from pool, ptr now:', pool.ptr, 'queueLen:', pool.queue.length, 'pick:', pick)
     gameStore.startNewChallenge(pick)
     // start 30s timer for this round
     startRoundTimer()
@@ -666,6 +678,7 @@ async function newChallenge() {
     }
   } finally {
     overpassInFlight = false
+    console.debug('overpassInFlight set to false')
   }
 }
 
@@ -748,19 +761,161 @@ function restartGame() {
   }, 300)
 }
 
+// Map ready handler (signaled by GameMap)
+function onMapReady() {
+  console.debug('onMapReady() received')
+  mapReady.value = true
+}
+
+function waitForMapReady(timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    if (mapReady.value) return resolve()
+    const unwatch = watch(mapReady, (v) => {
+      if (v) {
+        clearTimeout(timer)
+        unwatch()
+        resolve()
+      }
+    })
+    const timer = setTimeout(() => {
+      try { unwatch() } catch (e) {}
+      reject(new Error('timeout waiting for mapReady'))
+    }, timeoutMs)
+  })
+}
+
 // Handle start game from StartScreen
-function handleStartGame(settings) {
+async function handleStartGame(settings) {
   centerCity.value = settings.city
   radiusKm.value = settings.radius
   gameStore.showAddresses = settings.showAddresses
   gameStore.showNursingHomes = settings.showNursingHomes
   gameStore.showVillages = settings.showVillages
-  
+
   gameStore.resetScore()
+  // go to loading screen and prefetch data
+  gamePhase.value = 'loading'
+  loadingStatus.value = 'Vorbereitung'
+  loadingPercent.value = 0
+  try {
+    await prefetchForGame()
+  } catch (e) {
+    console.error('Prefetch failed', e)
+  }
+
+  // after prefetch, start playing and immediately set center and request a challenge
   gamePhase.value = 'playing'
-  
-  setTimeout(() => setCenter(), 300)
-  setTimeout(() => newChallenge(), 500)
+  // wait for the map component to signal readiness (mounted + tiles)
+  try {
+    await waitForMapReady(5000)
+  } catch (e) {
+    console.warn('Map did not signal ready in time', e)
+  }
+  try {
+    await setCenter()
+  } catch (e) {
+    console.warn('setCenter failed', e)
+  }
+  try {
+    await newChallenge()
+  } catch (e) {
+    console.warn('newChallenge failed', e)
+  }
+}
+
+function handleCancelLoading() {
+  // cancel loading and go back to start
+  loadingStatus.value = ''
+  loadingPercent.value = 0
+  gamePhase.value = 'start'
+}
+
+async function prefetchForGame() {
+  console.debug('prefetchForGame() start')
+  loadingStatus.value = 'Geokodierung'
+  loadingPercent.value = 5
+  await setCenter()
+
+  const radiusMeters = Math.max(1000, Math.min(100000, Math.round(radiusKm.value * 1000)))
+  const cacheKey = overpassCacheKey(center.value.lat, center.value.lon, radiusMeters)
+
+  const steps = []
+  if (showAddresses.value) steps.push('addresses')
+  if (showNursingHomes.value) steps.push('medical')
+  if (showVillages.value) steps.push('places')
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]
+    loadingStatus.value = `Lade ${step}...`
+    loadingPercent.value = 10 + Math.round((i / steps.length) * 70)
+    try {
+      if (step === 'addresses') {
+        const addrKey = `${cacheKey}:addr`
+        let addrEls = cacheGet(addrKey)
+        if (!addrEls) {
+          const res = await fetchOverpassWithRetry(`\n  [out:json][timeout:25];\n  (\n    node["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    way["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    relation["addr:housenumber"]["addr:street"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n  );\n  out tags center 800;\n  `)
+          addrEls = (res.data && res.data.elements) || []
+          if (addrEls && addrEls.length) cacheSet(addrKey, addrEls, OVERPASS_TTL)
+        }
+      } else if (step === 'medical') {
+        const medKey = `${cacheKey}:med`
+        let medEls = cacheGet(medKey)
+        if (!medEls) {
+          const res = await fetchOverpassWithRetry(`\n  [out:json][timeout:25];\n  (\n    node["amenity"="hospital"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    way["amenity"="hospital"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    relation["amenity"="hospital"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n\n    node["amenity"="clinic"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    way["amenity"="clinic"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    relation["amenity"="clinic"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n\n    node["amenity"="doctors"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    way["amenity"="doctors"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    relation["amenity"="doctors"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n\n    node["amenity"="nursing_home"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    way["amenity"="nursing_home"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    relation["amenity"="nursing_home"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n\n    node["amenity"="social_facility"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    way["amenity"="social_facility"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n    relation["amenity"="social_facility"](around:${radiusMeters},${center.value.lat},${center.value.lon});\n  );\n  out tags center 400;\n  `)
+          medEls = (res.data && res.data.elements) || []
+          if (medEls && medEls.length) cacheSet(medKey, medEls, OVERPASS_TTL)
+        }
+      } else if (step === 'places') {
+        const placeKey = `${cacheKey}:place`
+        let placeEls = cacheGet(placeKey)
+        if (!placeEls) {
+          const res = await fetchOverpassWithRetry(`\n  [out:json][timeout:60];\n  area["name"="${centerCity.value}"]["boundary"="administrative"]["admin_level"="8"]->.a;\n  (\n    node(area.a)["place"~"village|hamlet|suburb|neighbourhood"]["name"];\n    way(area.a)["place"~"village|hamlet|suburb|neighbourhood"]["name"];\n    relation(area.a)["place"~"village|hamlet|suburb|neighbourhood"]["name"];\n\n    relation(area.a)["boundary"="administrative"]["admin_level"~"9|10"]["name"];\n    way(area.a)["boundary"="administrative"]["admin_level"~"9|10"]["name"];\n  );\n  out tags center;\n  `)
+          placeEls = (res.data && res.data.elements) || []
+          if (placeEls && placeEls.length) cacheSet(placeKey, placeEls, OVERPASS_TTL)
+        }
+      }
+    } catch (err) {
+      console.warn('prefetch step failed', step, err)
+    }
+  }
+
+  loadingStatus.value = 'Erzeuge Adress-Pool'
+  loadingPercent.value = 90
+  const poolKey = addrPoolKey(cacheKey, showAddresses.value, showNursingHomes.value, showVillages.value)
+  let pool = cacheGet(poolKey)
+  if (!pool || !Array.isArray(pool.queue) || !pool.queue.length) {
+    const combined = []
+    const addrEls = cacheGet(`${cacheKey}:addr`) || []
+    const medEls = cacheGet(`${cacheKey}:med`) || []
+    const placeEls = cacheGet(`${cacheKey}:place`) || []
+    ;[...addrEls, ...medEls, ...placeEls].forEach(el => {
+      const tags = el.tags || {}
+      const street = tags['addr:street']
+      const housenumber = tags['addr:housenumber']
+      const name = tags['name']
+      const operator = tags['operator']
+      const brand = tags['brand']
+      const suburbTag = tags['suburb'] || tags['addr:suburb'] || ''
+      const label = name || operator || brand
+      const medicalLabel = name ? (operator ? `${name} – ${operator}` : name) : (operator || '')
+      let lat = undefined, lon = undefined
+      if (el.center && el.center.lat !== undefined && el.center.lon !== undefined) { lat = el.center.lat; lon = el.center.lon }
+      else if (el.lat !== undefined && el.lon !== undefined) { lat = el.lat; lon = el.lon }
+      if (lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) return
+      if (street && housenumber) { combined.push({ street, housenumber, suburb: suburbTag, label: '', lat, lon, type: 'address' }); return }
+      const amenity = tags['amenity']
+      if (medicalLabel && ['hospital','clinic','doctors','nursing_home','social_facility'].includes(amenity)) { let addressSuffix=''; if (street && housenumber) addressSuffix = `, ${street} ${housenumber}`; else if (street) addressSuffix = `, ${street}`; combined.push({ street: medicalLabel, housenumber: addressSuffix, suburb: '', label: medicalLabel, lat, lon, type: amenity }); return }
+      const placeType = tags['place']
+      if (label && ['village','hamlet','suburb','neighbourhood','locality'].includes(placeType)) { combined.push({ street: label, housenumber: '', suburb: '', label, lat, lon, type: 'village' }); return }
+    })
+    const queue = buildAddressQueue(combined)
+    pool = { queue, ptr: 0 }
+    cacheSet(poolKey, pool, OVERPASS_TTL)
+  }
+
+  loadingPercent.value = 100
+  loadingStatus.value = 'Bereit'
+  console.debug('prefetchForGame() finished, pool ready')
 }
 
 // Handle restart from EndScreen
@@ -770,8 +925,10 @@ function handleRestart() {
 
 // Initialize
 onMounted(() => {
+  // Do not auto-start a challenge on mount; the game flow will start challenges
+  // from `handleStartGame()` after prefetch and map readiness. Keep a light
+  // center initialization for safety.
   setTimeout(() => setCenter(), 300)
-  setTimeout(() => newChallenge(), 500)
 })
 </script>
 
