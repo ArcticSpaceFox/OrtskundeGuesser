@@ -50,6 +50,12 @@
       >
         Spiel starten
       </button>
+          <button
+            @click="$emit('open-updates')"
+            class="fixed bottom-6 right-6 px-4 py-2 bg-white/90 text-sm rounded shadow-lg"
+          >
+            Updates
+          </button>
     </div>
   </div>
 </template>

@@ -1,0 +1,67 @@
+[
+  {
+    "hash": "c176343",
+    "date": "2026-02-06",
+    "message": "v5.2 - Game loop fixes"
+  },
+  {
+    "hash": "bf74f6c",
+    "date": "2026-02-06",
+    "message": "v5.1 - Gamification update - timer"
+  },
+  {
+    "hash": "5c7f720",
+    "date": "2026-02-01",
+    "message": "v5 - deploy 1"
+  },
+  {
+    "hash": "12455a2",
+    "date": "2026-02-01",
+    "message": "v4.3 - scoring update"
+  },
+  {
+    "hash": "dba0381",
+    "date": "2026-02-01",
+    "message": "v4.2"
+  },
+  {
+    "hash": "3337a73",
+    "date": "2026-02-01",
+    "message": "v4.1"
+  },
+  {
+    "hash": "1fd4ee0",
+    "date": "2026-02-01",
+    "message": "v4"
+  },
+  {
+    "hash": "4af18fa",
+    "date": "2026-02-01",
+    "message": "v3.3 - nursing homes"
+  },
+  {
+    "hash": "0361ecd",
+    "date": "2026-02-01",
+    "message": "v3.2"
+  },
+  {
+    "hash": "5dc320b",
+    "date": "2026-02-01",
+    "message": "v3.1"
+  },
+  {
+    "hash": "df00534",
+    "date": "2026-02-01",
+    "message": "v3"
+  },
+  {
+    "hash": "53cce7d",
+    "date": "2026-02-01",
+    "message": "v2"
+  },
+  {
+    "hash": "afd215d",
+    "date": "2026-02-01",
+    "message": "v1"
+  }
+]

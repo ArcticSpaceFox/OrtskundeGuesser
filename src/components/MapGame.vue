@@ -2,14 +2,17 @@
   <div class="h-screen w-screen overflow-hidden bg-gray-100">
     <!-- Start Screen -->
     <StartScreen
-      v-if="gamePhase === 'start'"
+      v-if="gamePhase === 'start' && !showUpdates"
       :city="centerCity"
       :radius="radiusKm"
       :show-addresses="showAddresses"
       :show-nursing-homes="showNursingHomes"
       :show-villages="showVillages"
       @start-game="handleStartGame"
+      @open-updates="showUpdates = true"
     />
+
+    <Updates v-if="gamePhase === 'start' && showUpdates" @close="showUpdates = false" />
 
     <!-- Game Screen -->
     <template v-else-if="gamePhase === 'playing'">
@@ -80,6 +83,7 @@ import GameMap from './GameMap.vue'
 import BottomInfo from './BottomInfo.vue'
 import SettingsPanel from './SettingsPanel.vue'
 import StartScreen from './StartScreen.vue'
+import Updates from './Updates.vue'
 import EndScreen from './EndScreen.vue'
 
 const gameStore = useGameStore()
@@ -87,6 +91,7 @@ const { challenge, totalScore, roundsPlayed, roundsCounted, lastPoints, message,
 gameStore.init()
 
 const mapRef = ref(null)
+const showUpdates = ref(false)
 // Round timer (30s)
 const timerRemaining = ref(30)
 let timerId = null
