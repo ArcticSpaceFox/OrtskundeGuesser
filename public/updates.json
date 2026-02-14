@@ -1,5 +1,10 @@
 [
   {
+    "hash": "f1eac8f",
+    "date": "2026-02-06",
+    "message": "v5.5 - Spinner of death - added loading screen to show user that the game is initilizing"
+  },
+  {
     "hash": "570aa5c",
     "date": "2026-02-06",
     "message": "v5.4 - Quitting was never an option - added quit button so a player can exit a current round"

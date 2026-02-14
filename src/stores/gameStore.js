@@ -12,6 +12,7 @@ export const useGameStore = defineStore('game', {
 
     // Round settings
     totalRounds: 10,
+    timerEnabled: true,
 
     // Score and rounds
     totalScore: 0,

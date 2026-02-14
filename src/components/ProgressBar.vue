@@ -1,5 +1,5 @@
 <template>
-  <div class="fixed top-16 left-0 right-0 h-3 bg-black/30 z-40 relative">
+  <div class="fixed top-24 lg:top-16 left-0 right-0 h-3 bg-black/30 z-40 relative">
     <div
       class="h-full transition-all duration-300"
       :style="{ width: progressPercent + '%', background: progressColor }"

@@ -1,5 +1,5 @@
 <template>
-  <div ref="mapEl" class="absolute top-16 left-0 right-0 bottom-0 z-10"></div>
+  <div ref="mapEl" class="absolute top-24 lg:top-16 left-0 right-0 bottom-0 z-10"></div>
 </template>
 
 <script setup>

@@ -36,6 +36,10 @@
             <input type="checkbox" v-model="localShowVillages" />
             <span>Ortschaften</span>
           </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" v-model="localTimerEnabled" />
+            <span>Rundentimer aktiv</span>
+          </label>
         </div>
       </div>
 
@@ -84,7 +88,8 @@ const props = defineProps({
   radius: Number,
   showAddresses: Boolean,
   showNursingHomes: Boolean,
-  showVillages: Boolean
+  showVillages: Boolean,
+  timerEnabled: Boolean
 })
 
 const emit = defineEmits(['close', 'apply', 'reset-score', 'reset-all', 'restart'])
@@ -94,6 +99,7 @@ const localRadius = ref(props.radius)
 const localShowAddresses = ref(props.showAddresses)
 const localShowNursingHomes = ref(props.showNursingHomes)
 const localShowVillages = ref(props.showVillages)
+const localTimerEnabled = ref(props.timerEnabled)
 
 watch(() => props.isOpen, (newVal) => {
   if (newVal) {
@@ -102,6 +108,7 @@ watch(() => props.isOpen, (newVal) => {
     localShowAddresses.value = props.showAddresses
     localShowNursingHomes.value = props.showNursingHomes
     localShowVillages.value = props.showVillages
+    localTimerEnabled.value = props.timerEnabled
   }
 })
 
@@ -111,7 +118,8 @@ function handleApply() {
     radius: localRadius.value,
     showAddresses: localShowAddresses.value,
     showNursingHomes: localShowNursingHomes.value,
-    showVillages: localShowVillages.value
+    showVillages: localShowVillages.value,
+    timerEnabled: localTimerEnabled.value
   })
 }
 </script>

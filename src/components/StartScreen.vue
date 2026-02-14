@@ -41,6 +41,10 @@
             <input type="checkbox" v-model="localShowVillages" class="w-4 h-4" />
             <span class="text-sm">Ortschaften</span>
           </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" v-model="localTimerEnabled" class="w-4 h-4" />
+            <span class="text-sm">Rundentimer aktiv</span>
+          </label>
         </div>
       </div>
 
@@ -68,7 +72,8 @@ const props = defineProps({
   radius: Number,
   showAddresses: Boolean,
   showNursingHomes: Boolean,
-  showVillages: Boolean
+  showVillages: Boolean,
+  timerEnabled: Boolean
 })
 
 const emit = defineEmits(['start-game'])
@@ -78,6 +83,7 @@ const localRadius = ref(props.radius)
 const localShowAddresses = ref(props.showAddresses)
 const localShowNursingHomes = ref(props.showNursingHomes)
 const localShowVillages = ref(props.showVillages)
+const localTimerEnabled = ref(props.timerEnabled)
 
 function startGame() {
   emit('start-game', {
@@ -85,7 +91,8 @@ function startGame() {
     radius: localRadius.value,
     showAddresses: localShowAddresses.value,
     showNursingHomes: localShowNursingHomes.value,
-    showVillages: localShowVillages.value
+    showVillages: localShowVillages.value,
+    timerEnabled: localTimerEnabled.value
   })
 }
 </script>

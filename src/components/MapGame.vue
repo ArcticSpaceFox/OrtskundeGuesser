@@ -8,6 +8,7 @@
       :show-addresses="showAddresses"
       :show-nursing-homes="showNursingHomes"
       :show-villages="showVillages"
+      :timer-enabled="timerEnabled"
       @start-game="handleStartGame"
       @open-updates="showUpdates = true"
     />
@@ -56,6 +57,7 @@
         :show-addresses="showAddresses"
         :show-nursing-homes="showNursingHomes"
         :show-villages="showVillages"
+        :timer-enabled="timerEnabled"
         @close="showSettings = false"
         @apply="applySettings"
         @reset-score="gameStore.resetScore()"
@@ -90,7 +92,7 @@ import LoadingScreen from './LoadingScreen.vue'
 import EndScreen from './EndScreen.vue'
 
 const gameStore = useGameStore()
-const { challenge, totalScore, roundsPlayed, roundsCounted, lastPoints, message, distanceKm, progressPercent, progressColor, showAddresses, showNursingHomes, showVillages, showSettings, showAnswer, gamePhase } = storeToRefs(gameStore)
+const { challenge, totalScore, roundsPlayed, roundsCounted, lastPoints, message, distanceKm, progressPercent, progressColor, showAddresses, showNursingHomes, showVillages, timerEnabled, showSettings, showAnswer, gamePhase } = storeToRefs(gameStore)
 gameStore.init()
 
 const mapRef = ref(null)
@@ -261,9 +263,17 @@ const nextTimerColor = computed(() => {
 const nextTimerLabel = computed(() => nextRoundCountdown.value > 0 ? `Nächste Runde in ${nextRoundCountdown.value}s` : '')
 
 // decide what to show in ProgressBar: during active round show timer, after answer show next-countdown
-const displayPercent = computed(() => (nextRoundCountdown.value > 0 && showAnswer.value) ? nextTimerPercent.value : timerPercent.value)
+const displayPercent = computed(() => {
+  if (nextRoundCountdown.value > 0 && showAnswer.value) return nextTimerPercent.value
+  if (!timerEnabled.value) return 0
+  return timerPercent.value
+})
 const displayColor = computed(() => (nextRoundCountdown.value > 0 && showAnswer.value) ? nextTimerColor.value : timerColor.value)
-const displayLabel = computed(() => (nextRoundCountdown.value > 0 && showAnswer.value) ? nextTimerLabel.value : timerLabel.value)
+const displayLabel = computed(() => {
+  if (nextRoundCountdown.value > 0 && showAnswer.value) return nextTimerLabel.value
+  if (!timerEnabled.value) return ''
+  return timerLabel.value
+})
 const centerCity = ref('Güstrow')
 const radiusKm = ref(10)
 const center = ref({ lat: 53.7921, lon: 12.2001 })
@@ -659,8 +669,13 @@ async function newChallenge() {
 
     console.debug('Picking challenge from pool, ptr now:', pool.ptr, 'queueLen:', pool.queue.length, 'pick:', pick)
     gameStore.startNewChallenge(pick)
-    // start 30s timer for this round
-    startRoundTimer()
+    // start 30s timer for this round when enabled
+    if (timerEnabled.value) {
+      startRoundTimer()
+    } else {
+      clearRoundTimer()
+      timerRemaining.value = TOTAL_SECONDS
+    }
     mapRef.value.clearMarkers()
     console.log('Center value:', center.value)
     console.log('Calling zoomToRadius with:', center.value.lat, center.value.lon, 'radius:', radiusKm.value)
@@ -736,6 +751,13 @@ function applySettings(settings) {
   showAddresses.value = settings.showAddresses
   showNursingHomes.value = settings.showNursingHomes
   showVillages.value = settings.showVillages
+  timerEnabled.value = settings.timerEnabled
+  if (!timerEnabled.value) {
+    clearRoundTimer()
+    timerRemaining.value = TOTAL_SECONDS
+  } else if (challenge.value && !showAnswer.value) {
+    startRoundTimer()
+  }
   showSettings.value = false
   setCenter()
 }
@@ -791,6 +813,7 @@ async function handleStartGame(settings) {
   gameStore.showAddresses = settings.showAddresses
   gameStore.showNursingHomes = settings.showNursingHomes
   gameStore.showVillages = settings.showVillages
+  gameStore.timerEnabled = settings.timerEnabled
 
   gameStore.resetScore()
   // go to loading screen and prefetch data
